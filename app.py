@@ -68,7 +68,7 @@ if user_api:
                         
                         # ปุ่มแชร์ไป Facebook แบบด่วน (ส่งแค่ Link)
                         share_url = f"https://www.facebook.com/sharer/sharer.php?u={entry.link}"
-                        st.markdown(f'<a href="{share_url}" target="_blank">🔵 แชร์ลิงก์ไป Facebook</a>', unsafe_allow_back_config=True, unsafe_allow_html=True)
+                        st.markdown(f'<a href="{share_url}" target="_blank">🔵 แชร์ลิงก์ไป Facebook</a>', unsafe_allow_html=True)
                     
                     st.divider()
     except Exception as e:
