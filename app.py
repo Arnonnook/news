@@ -1,65 +1,75 @@
 import streamlit as st
 import feedparser
-import google.generativeai as genai
+from groq import Groq # เปลี่ยนจาก google.generativeai เป็น groq
 
 # ตั้งค่าหน้าจอ
-st.set_page_config(page_title="News to Image Prompt", page_icon="🎨", layout="wide")
+st.set_page_config(page_title="News to Image Prompt (Groq)", page_icon="🎨", layout="wide")
 
-st.title("📰 ระบบสรุปข่าว & เจนชุดคำสั่งสร้างรูป")
-st.caption("ดึงข่าว สรุปเนื้อหา และสร้าง English Prompt สำหรับเอาไปเจนรูปเอง")
+st.title("📰 ระบบสรุปข่าว & เจนชุดคำสั่งสร้างรูป (Powered by Groq)")
+st.caption("ดึงข่าว สรุปเนื้อหา และสร้าง English Prompt สำหรับเอาไปเจนรูปเองด้วย Llama 3.3")
 
 # ส่วนตั้งค่าใน Sidebar
 with st.sidebar:
     st.header("⚙️ การตั้งค่า")
-    default_api = st.secrets.get("GEMINI_API_KEY", "")
-    user_api = st.text_input("Gemini API Key", value=default_api, type="password")
+    # ดึง Key จาก Secrets หรือให้ User กรอกเอง
+    default_api = st.secrets.get("GROQ_API_KEY", "")
+    user_api = st.text_input("Groq API Key", value=default_api, type="password")
     
     st.divider()
-    source_url = st.text_input("RSS Feed URL", "https://www.thairath.co.th/rss/news")
+    source_url = st.text_input("RSS Feed URL", "https://news.google.com/rss?hl=th&gl=TH&ceid=TH:th")
     num_news = st.slider("จำนวนข่าว", 1, 10, 5)
 
 if user_api:
     try:
-        genai.configure(api_key=user_api)
-        model = genai.GenerativeModel('models/gemini-2.5-flash')
+        # สร้าง Client สำหรับ Groq
+        client = Groq(api_key=user_api)
 
         if st.button("🔄 ดึงข่าวและสร้างชุดคำสั่ง"):
-            with st.spinner('กำลังวิเคราะห์ข่าว...'):
+            with st.spinner('กำลังวิเคราะห์ข่าวด้วย AI...'):
                 feed = feedparser.parse(source_url)
+                
+                if not feed.entries:
+                    st.warning("ไม่พบข่าวจาก URL ที่ระบุ")
                 
                 for entry in feed.entries[:num_news]:
                     # 1. สั่งสรุปเนื้อหาข่าวสำหรับ Facebook
-                    s_prompt = f"สรุปข่าวนี้สั้นๆ สำหรับโพสต์ Facebook พร้อมอีโมจิ: {entry.title} \nเนื้อหา: {entry.summary}"
-                    summary_text = model.generate_content(s_prompt).text
+                    s_completion = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[
+                            {"role": "system", "content": "สรุปข่าวสั้นๆ สำหรับโพสต์ Facebook พร้อมอีโมจิและ Hashtag"},
+                            {"role": "user", "content": f"ข่าว: {entry.title}"}
+                        ]
+                    )
+                    summary_text = s_completion.choices[0].message.content
                     
-                    # 2. สั่งสร้าง Prompt สำหรับเอาไปเจนรูป (เน้นความสวยงามและสื่ออารมณ์)
-                    # คุณสามารถแก้ 'สไตล์' ใน i_prompt นี้ได้ตามชอบ เช่น cinematic, oil painting, 3d render
-                    i_prompt = f"""วิเคราะห์ข่าวนี้: '{entry.title}' 
-                    แล้วเขียน Image Generation Prompt เป็นภาษาอังกฤษ 1 ประโยคยาวๆ 
-                    ระบุรายละเอียด แสง สี และสไตล์แบบ Cinematic Photo เพื่อให้รูปออกมาดูแพงและสื่อถึงเนื้อหาข่าว
-                    (ไม่ต้องมีเครื่องหมายคำพูด)
-                    เนื้อหาข่าว: {entry.title}"""
-                    
-                    image_prompt_eng = model.generate_content(i_prompt).text.strip()
+                    # 2. สั่งสร้าง Prompt ภาษาอังกฤษสำหรับเจนรูป
+                    i_completion = client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[
+                            {"role": "system", "content": "You are a professional image prompt engineer."},
+                            {"role": "user", "content": f"Create a detailed, 1-sentence English cinematic photo prompt based on this news title: '{entry.title}'. Focus on lighting, mood, and high-quality details. No quotes."}
+                        ]
+                    )
+                    image_prompt_eng = i_completion.choices[0].message.content.strip()
 
                     # --- แสดงผล ---
-                    st.subheader(f"📌 {entry.title}")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.markdown("📝 **ข้อความสำหรับโพสต์ Facebook:**")
-                        st.code(summary_text, language="text")
-                    
-                    with col2:
-                        st.markdown("🎨 **ชุดคำสั่งสร้างรูป (Copy ไปวางใน AI ตัวอื่น):**")
-                        # แสดง Prompt ภาษาอังกฤษในช่องที่ก๊อปปี้ง่ายๆ
-                        st.code(image_prompt_eng, language="text")
-                    
-                    st.markdown(f"[🔗 ลิงก์ข่าวต้นฉบับ]({entry.link})")
-                    st.divider()
-                    
+                    with st.container():
+                        st.subheader(f"📌 {entry.title}")
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("📝 **ข้อความสำหรับโพสต์ Facebook:**")
+                            st.code(summary_text, language="text")
+                        
+                        with col2:
+                            st.markdown("🎨 **ชุดคำสั่งสร้างรูป (English Prompt):**")
+                            st.code(image_prompt_eng, language="text")
+                        
+                        st.markdown(f"[🔗 ลิงก์ข่าวต้นฉบับ]({entry.link})")
+                        st.divider()
+                        
     except Exception as e:
         st.error(f"เกิดข้อผิดพลาด: {e}")
 else:
-    st.info("👈 กรุณาใส่ Gemini API Key ที่แถบด้านข้าง")
+    st.info("👈 กรุณาใส่ Groq API Key ที่แถบด้านข้าง (สมัครฟรีที่ console.groq.com)")
