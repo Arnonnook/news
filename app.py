@@ -1,93 +1,105 @@
 import streamlit as st
 import feedparser
+import requests
+from bs4 import BeautifulSoup
 from groq import Groq
-# เพิ่มเพื่อให้ดึง HTML ได้ดีขึ้น (ถ้าต้องการดึงจากหน้าเว็บตรงๆ ต้องลง pip install beautifulsoup4)
 
-st.set_page_config(page_title="Deep News Analysis", page_icon="📰", layout="wide")
+# ตั้งค่าหน้าจอ
+st.set_page_config(page_title="Thairath Deep Analysis", page_icon="📰", layout="wide")
 
-st.title("📰 ระบบดึงข่าวและวิเคราะห์เชิงลึก")
-st.caption("ดึงเนื้อหาละเอียดขึ้น สรุปยาวขึ้น และสร้าง Prompt ที่แม่นยำ")
+st.title("📰 ระบบดึงข่าวไทยรัฐเชิงลึก (Full Content)")
+st.caption("ดึง RSS ไทยรัฐ และเข้าอ่านเนื้อหาเต็มจากหน้าเว็บเพื่อสรุปด้วย Groq")
 
+# --- ฟังก์ชันดึงเนื้อหาเต็มจากลิงก์ไทยรัฐ ---
+def get_full_article(url):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers)
+        response.encoding = 'utf-8'
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # ไทยรัฐมักเก็บเนื้อหาหลักไว้ในคลาสหรือแท็กที่เฉพาะเจาะจง
+        # เราจะดึงเฉพาะส่วนที่เป็นเนื้อหาข่าว (p tags)
+        paragraphs = soup.find_all('p')
+        content = " ".join([p.get_text() for p in paragraphs if len(p.get_text()) > 50])
+        
+        # ตัดเนื้อหาให้เหลือประมาณ 3000 ตัวอักษรเพื่อไม่ให้เกินขีดจำกัด AI
+        return content[:3000] 
+    except Exception as e:
+        return f"ไม่สามารถดึงเนื้อหาเต็มได้: {e}"
+
+# --- ส่วน Sidebar ---
 with st.sidebar:
     st.header("⚙️ การตั้งค่า")
     default_api = st.secrets.get("GROQ_API_KEY", "")
     user_api = st.text_input("Groq API Key", value=default_api, type="password")
     
     st.divider()
-    # แนะนำ RSS ของ Google News มักจะให้ข้อมูลที่เชื่อมโยงได้ดี
-    source_url = st.text_input("RSS Feed URL", "https://news.google.com/rss?hl=th&gl=TH&ceid=TH:th")
-    num_news = st.slider("จำนวนข่าว", 1, 5, 3) # ลดจำนวนลงเพื่อเน้นคุณภาพต่อข่าว
+    # RSS ของไทยรัฐ (เลือกหมวดหมู่ได้ เช่น /news, /sport, /ent)
+    source_url = st.text_input("Thairath RSS URL", "https://www.thairath.co.th/rss/news")
+    num_news = st.slider("จำนวนข่าวที่จะดึง", 1, 5, 3)
 
 if user_api:
     try:
         client = Groq(api_key=user_api)
 
-        if st.button("🚀 เริ่มดึงข้อมูลเชิงลึก"):
-            with st.spinner('กำลังดึงและวิเคราะห์เนื้อหาอย่างละเอียด...'):
+        if st.button("🚀 เริ่มดึงข่าวไทยรัฐแบบละเอียด"):
+            with st.spinner('กำลังเข้าอ่านเนื้อหาข่าวจากไทยรัฐ...'):
                 feed = feedparser.parse(source_url)
                 
+                if not feed.entries:
+                    st.error("ไม่สามารถดึง RSS ได้ กรุณาตรวจสอบ URL")
+                
                 for entry in feed.entries[:num_news]:
-                    # รวมหัวข้อและเนื้อหาที่มี (บางครั้งเนื้อหาเต็มอยู่ใน entry.description)
-                    full_raw_content = f"หัวข้อ: {entry.title} \nรายละเอียดเบื้องต้น: {entry.get('summary', 'ไม่มีข้อมูลสรุป')}"
-
-                    # 1. Prompt แบบ "Deep Summary" สำหรับ Facebook
-                    # สั่งให้ AI วิเคราะห์บริบทเพิ่มเติมและเขียนให้น่าอ่านแบบยาว
+                    # --- ขั้นตอนสำคัญ: ไปดึงเนื้อหาเต็มจากหน้าเว็บ ---
+                    full_text = get_full_article(entry.link)
+                    
+                    # 1. สั่ง Groq สรุปเนื้อหาจากข้อมูลที่ดึงมาใหม่
                     s_prompt = f"""
-                    วิเคราะห์ข่าวจากข้อมูลนี้: {full_raw_content}
+                    นี่คือเนื้อหาข่าวจากไทยรัฐ: 
+                    หัวข้อ: {entry.title}
+                    เนื้อหาเต็ม: {full_text}
+                    
                     งานของคุณ:
-                    1. เขียนโพสต์ Facebook ความยาวประมาณ 3-5 ย่อหน้า
-                    2. เริ่มด้วยพาดหัวที่หยุดนิ้วคนดู (Hook)
-                    3. สรุปเนื้อหาสำคัญ แยกเป็นข้อๆ (Bullet points) ให้เข้าใจง่าย
-                    4. เพิ่มบทวิเคราะห์สั้นๆ ว่าเรื่องนี้กระทบกับคนอ่านอย่างไร
-                    5. ใส่ Emoji ที่เหมาะสมและ Hashtag 5-7 อัน
-                    6. ใช้ภาษาที่เป็นกันเองแต่ดูน่าเชื่อถือ
+                    1. สรุปเป็นโพสต์ Facebook ที่ยาวและละเอียด (ประมาณ 4-5 ย่อหน้า)
+                    2. เขียนพาดหัวให้น่าสนใจ (Clickbait แบบมีสาระ)
+                    3. สรุปประเด็นสำคัญเป็นข้อๆ
+                    4. วิเคราะห์ที่มาที่ไปและความน่าสนใจของข่าวนี้
+                    5. ใส่ Emoji และ Hashtag ให้ครบถ้วน
                     """
                     
                     s_completion = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
                         messages=[{"role": "user", "content": s_prompt}],
                         temperature=0.7,
-                        max_tokens=2048 # เพิ่มจำนวน Token เพื่อให้เขียนได้ยาวขึ้น
+                        max_tokens=2500
                     )
-                    summary_text = s_completion.choices[0].message.content
+                    summary_result = s_completion.choices[0].message.content
 
-                    # 2. Prompt สำหรับ Image ที่ละเอียดขึ้น (Detailed Scene Description)
-                    i_prompt = f"""
-                    Based on this news: '{entry.title}'
-                    Create a hyper-realistic, detailed English prompt for AI image generation (Midjourney/DALL-E style).
-                    Include:
-                    - Subject detail (clothing, expression, action)
-                    - Environment/Background (weather, location, atmosphere)
-                    - Camera settings (8k, cinematic lighting, 85mm lens, depth of field)
-                    - Artistic style (Photo-realism)
-                    One long continuous paragraph.
-                    """
-                    
+                    # 2. สร้าง Prompt สำหรับเจนรูป
+                    i_prompt = f"Create a high-quality cinematic photo prompt for AI generation based on this news: {entry.title}. Detailed lighting, 8k, professional photography style."
                     i_completion = client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
-                        messages=[{"role": "user", "content": i_prompt}],
-                        temperature=0.6
+                        messages=[{"role": "user", "content": i_prompt}]
                     )
-                    image_prompt_eng = i_completion.choices[0].message.content
+                    image_prompt = i_completion.choices[0].message.content
 
-                    # --- UI Rendering ---
+                    # --- แสดงผลหน้าจอ ---
                     st.subheader(f"🔥 {entry.title}")
-                    col1, col2 = st.columns([3, 2]) # ปรับสัดส่วนให้คอลัมน์เนื้อหายาวกว้างกว่า
+                    col1, col2 = st.columns([2, 1])
                     
                     with col1:
-                        st.markdown("### 📝 เนื้อหาโพสต์แบบละเอียด")
-                        st.write(summary_text) # ใช้ write แทน code เพื่อให้อ่านง่ายขึ้น (ก๊อปปี้ได้เหมือนกัน)
-                        if st.button(f"คัดลอกเนื้อหา {entry.title[:20]}...", key=entry.link):
-                            st.write("คัดลอกสำเร็จ! (ตัวอย่างฟีเจอร์)")
+                        st.markdown("### 📝 โพสต์ Facebook ฉบับเต็ม")
+                        st.write(summary_result)
                         
                     with col2:
-                        st.markdown("### 🎨 Image Prompt (Detailed)")
-                        st.code(image_prompt_eng, language="text")
-                    
-                    st.markdown(f"🔗 [อ่านข่าวเต็มจากแหล่งที่มา]({entry.link})")
+                        st.markdown("### 🎨 AI Image Prompt")
+                        st.code(image_prompt, language="text")
+                        
+                    st.caption(f"แหล่งข้อมูล: {entry.link}")
                     st.divider()
                         
     except Exception as e:
         st.error(f"เกิดข้อผิดพลาด: {e}")
 else:
-    st.info("👈 กรุณาใส่ Groq API Key")
+    st.info("👈 ใส่ Groq API Key ใน Sidebar เพื่อเริ่มงาน")
