@@ -1,3 +1,5 @@
 streamlit
 feedparser
 groq
+beautifulsoup4
+requests
